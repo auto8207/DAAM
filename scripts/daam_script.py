@@ -64,11 +64,19 @@ class Script(scripts.Script):
                     trace_each_layers = gr.Checkbox(label = 'Trace each layers', value=False)
 
                     layers_as_row = gr.Checkbox(label = 'Use layers as row instead of Batch Length', value=False)
+
+                with gr.Row():
+                    normalization_methods = gr.Dropdown(
+                        ["softmax", "softmin", "scale_exp", "temp_softmax", "power_norm", "log_sum_exp"],
+                        label="Normalization Method",
+                        value="softmax"
+                    )
+                
         
         
         self.tracers = None
         
-        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale, trace_each_layers, layers_as_row] 
+        return [attention_texts, hide_images, dont_save_images, hide_caption, use_grid, grid_layouyt, alpha, heatmap_image_scale, trace_each_layers, layers_as_row, normalization_methods] 
     
     def process(self, 
             p : StableDiffusionProcessing, 
@@ -81,7 +89,8 @@ class Script(scripts.Script):
             alpha : float, 
             heatmap_image_scale : float,
             trace_each_layers : bool,
-            layers_as_row: bool):
+            layers_as_row: bool,
+            normalization_method: str):
         
         self.enabled = False # in case the assert fails
         assert opts.samples_save, "Cannot run Daam script. Enable 'Always save all generated images' setting."
@@ -99,6 +108,8 @@ class Script(scripts.Script):
         self.attentions = [s.strip() for s in attention_texts.split(",") if s.strip()]
         self.enabled = len(self.attentions) > 0
 
+        self.normalization_method = normalization_method
+
         fix_seed(p)
         
     def process_batch(self,
@@ -113,12 +124,13 @@ class Script(scripts.Script):
             heatmap_image_scale : float,
             trace_each_layers : bool,
             layers_as_row: bool,
+            normalization_method: str,
             prompts,
             **kwargs):
                 
         if not self.enabled:
             return
-        
+        self.normalization_method = normalization_method
         styled_prompt = prompts[0]         
         
         embedder = None
@@ -167,6 +179,10 @@ class Script(scripts.Script):
             else:
                 self.tracers = [trace(p.sd_model, p.height, p.width, context_size)]
                 self.attn_captions = [""]
+
+            for tracer in self.tracers:
+                tracer.hook()
+                tracer.set_normalization_method(self.normalization_method)  # 設置歸一化方法
         
             for tracer in self.tracers:
                 tracer.hook()
@@ -182,6 +198,7 @@ class Script(scripts.Script):
             heatmap_image_scale : float,
             trace_each_layers : bool,
             layers_as_row: bool,
+            normalization_method: str,
             **kwargs):
         if self.enabled == False:
             return

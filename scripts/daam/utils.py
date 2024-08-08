@@ -6,7 +6,8 @@ import random
 import re
 
 from PIL import Image, ImageFont, ImageDraw
-from fonts.ttf import Roboto
+#from fonts.ttf import Roboto
+
 import matplotlib.pyplot as plt
 from matplotlib import cm
 import numpy as np
@@ -20,6 +21,9 @@ import open_clip.tokenizer
 from modules.sd_hijack_clip import FrozenCLIPEmbedderWithCustomWordsBase, FrozenCLIPEmbedderWithCustomWords
 from modules.sd_hijack_open_clip import FrozenOpenCLIPEmbedderWithCustomWords
 from modules.shared import opts
+
+font_path = "arial.ttf"  # 替換為你系統中存在的字體文件
+Roboto = ImageFont.truetype(font_path, size=32)
 
 __all__ = ['expand_image', 'set_seed', 'escape_prompt', 'calc_context_size', 'compute_token_merge_indices', 'compute_token_merge_indices_with_tokenizer', 'image_overlay_heat_map', 'plot_overlay_heat_map', 'plot_mask_heat_map', 'PromptAnalyzer']
 
@@ -38,20 +42,20 @@ def expand_image(im: torch.Tensor, h = 512, w = 512,  absolute: bool = False, th
 
     return im.squeeze()
 
-def _write_on_image(img, caption, font_size = 32):
-    ix,iy = img.size
+def _write_on_image(img, caption, font_size=32):
+    ix, iy = img.size
     draw = ImageDraw.Draw(img)
-    margin=2
-    fontsize=font_size
+    margin = 2
+    fontsize = font_size
     draw = ImageDraw.Draw(img)
-    font = ImageFont.truetype(Roboto, fontsize)
-    text_height=iy-60
-    tx = draw.textbbox((0,0),caption,font)
-    draw.text((int((ix-tx[2])/2),text_height+margin),caption,(0,0,0),font=font)
-    draw.text((int((ix-tx[2])/2),text_height-margin),caption,(0,0,0),font=font)
-    draw.text((int((ix-tx[2])/2+margin),text_height),caption,(0,0,0),font=font)
-    draw.text((int((ix-tx[2])/2-margin),text_height),caption,(0,0,0),font=font)
-    draw.text((int((ix-tx[2])/2),text_height), caption,(255,255,255),font=font)
+    font = ImageFont.truetype(Roboto.path, fontsize)  # 確保這裡的字體引用正確
+    text_height = iy - 60
+    tx = draw.textbbox((0, 0), caption, font)
+    draw.text((int((ix - tx[2]) / 2), text_height + margin), caption, (0, 0, 0), font=font)
+    draw.text((int((ix - tx[2]) / 2), text_height - margin), caption, (0, 0, 0), font=font)
+    draw.text((int((ix - tx[2]) / 2 + margin), text_height), caption, (0, 0, 0), font=font)
+    draw.text((int((ix - tx[2]) / 2 - margin), text_height), caption, (0, 0, 0), font=font)
+    draw.text((int((ix - tx[2]) / 2), text_height), caption, (255, 255, 255), font=font)
     return img
 
 def image_overlay_heat_map(img, heat_map, word=None, out_file=None, crop=None, alpha=0.5, caption=None, image_scale=1.0):

@@ -194,7 +194,11 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         self.img_height = img_height
         self.img_width =  img_width
         self.calledCount = 0
-        
+        self.normalization_method = "softmax"  # 默認為 softmax
+
+    def set_normalization_method(self, method):
+        self.normalization_method = method
+
     def reset(self):
         self.heat_maps.clear()
         self.calledCount = 0
@@ -273,10 +277,60 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             max_neg_value = -torch.finfo(sim.dtype).max
             mask = repeat(mask, 'b j -> (b h) () j', h=h)
             sim.masked_fill_(~mask, max_neg_value)
-        
-        out = hk_self._hooked_attention(self, q, k, v, batch_size, sequence_length, dim)
-        
-        return self.to_out(out)
+
+        # 應用選擇的歸一化方法
+        attn_slice = hk_self.apply_normalization(sim, hk_self.normalization_method)
+
+        hid_states = torch.einsum("b i j, b j d -> b i d", attn_slice, v)
+
+        hidden_states = torch.zeros(
+            (batch_size * h, sequence_length, dim // h), device=q.device, dtype=q.dtype
+        )
+
+        slice_size = hidden_states.shape[0] // batch_size
+        factor_base = int(math.sqrt(hk_self.img_width * hk_self.img_height))
+
+        for batch_index in range(hidden_states.shape[0] // slice_size):
+            start_idx = batch_index * slice_size
+            end_idx = (batch_index + 1) * slice_size
+            attn_slice = (
+                torch.einsum("b i d, b j d -> b i j", q[start_idx:end_idx], k[start_idx:end_idx]) * self.scale
+            )
+            factor = int(math.sqrt(factor_base // attn_slice.shape[1]))
+            attn_slice = hk_self.apply_normalization(attn_slice, hk_self.normalization_method)
+            hid_states = torch.einsum("b i j, b j d -> b i d", attn_slice, v[start_idx:end_idx])            
+
+            if hk_self.calledCount % 2 == 1 and attn_slice.shape[-1] == hk_self.context_size:    
+                if factor >= 1:
+                    factor //= 1
+                    maps = hk_self._up_sample_attn(attn_slice, v, factor)
+                    hk_self.heat_maps[batch_index][factor].append(maps)
+
+            hidden_states[start_idx:end_idx] = hid_states
+
+        hidden_states = hk_self.reshape_batch_dim_to_heads(self, hidden_states)
+        return self.to_out(hidden_states)
+
+    def apply_normalization(self, sim, method):
+        if method == 'softmax':
+            return sim.softmax(dim=-1)
+        elif method == 'softmin':
+            return sim.softmin(dim=-1)
+        elif method == 'scale_exp':
+            return (sim / sim.max()).exp()
+        elif method == 'temp_softmax':
+            temperature = 0.1  # 可以根據需要調整
+            return (sim / temperature).softmax(dim=-1)
+        elif method == 'power_norm':
+            return (sim ** 2).softmax(dim=-1)
+        elif method == 'log_sum_exp':
+            return torch.logsumexp(sim, dim=-1)
+        else:
+            raise ValueError(f"Unknown normalization method: {method}")
+    
+
+
+
     
     ### forward implemetation of diffuser CrossAttention
     # def forward(self, hidden_states, context=None, mask=None):
@@ -311,6 +365,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
     #     # dropout
     #     hidden_states = self.to_out[1](hidden_states)
     #     return hidden_states
+   
 
     def _hooked_attention(hk_self, self, query, key, value, batch_size, sequence_length, dim, use_context: bool = True):
         """
@@ -345,7 +400,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
                     torch.einsum("b i d, b j d -> b i j", query[start_idx:end_idx], key[start_idx:end_idx]) * self.scale
             )
             factor = int(math.sqrt(factor_base // attn_slice.shape[1]))
-            attn_slice = attn_slice.softmax(-1)
+            attn_slice = hk_self.apply_normalization(attn_slice, hk_self.normalization_method)
             hid_states = torch.einsum("b i j, b j d -> b i d", attn_slice, value[start_idx:end_idx])            
                 
             if use_context and  hk_self.calledCount % 2 == 1 and attn_slice.shape[-1] == hk_self.context_size:    
